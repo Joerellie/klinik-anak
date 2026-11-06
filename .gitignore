@@ -1,0 +1,15 @@
+# Dependencies & OS Files
+.DS_Store
+Thumbs.db
+node_modules/
+
+# Agent local skills cache
+.agents/
+
+# IDE files
+.vscode/
+.idea/
+
+# Environment local secrets
+.env
+.env.local

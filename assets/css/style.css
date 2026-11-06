@@ -1,0 +1,179 @@
+/**
+ * Klinik Anak Happy - UI/UX Pro Max Design System
+ * Theme: Soft UI Evolution + Bento Box Grid (Child Friendly, Minimalist, High Contrast)
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+
+:root {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  
+  /* Primary Palette */
+  --primary: #0891b2;
+  --primary-hover: #0e7490;
+  --primary-light: #ecfeff;
+  --primary-border: #a5f3fc;
+  
+  /* Secondary / Accent */
+  --accent-teal: #0d9488;
+  --accent-mint: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  --accent-sky: #0284c7;
+
+  /* Surfaces */
+  --bg-page: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --border-card: #e2e8f0;
+  
+  /* Text */
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-soft: #94a3b8;
+  
+  /* Soft UI Shadows */
+  --shadow-soft: 0 4px 20px -2px rgba(8, 145, 178, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 10px 25px -5px rgba(15, 23, 42, 0.04), 0 8px 10px -6px rgba(15, 23, 42, 0.02);
+  --shadow-hover: 0 20px 30px -10px rgba(8, 145, 178, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  
+  --radius-card: 20px;
+  --radius-pill: 9999px;
+  --radius-btn: 14px;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-page);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Bento Card Style */
+.bento-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  transition: all 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.bento-card:hover {
+  box-shadow: var(--shadow-soft);
+}
+
+.bento-card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  border-color: var(--primary-border);
+}
+
+/* Glass Header */
+.glass-nav {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+/* Gentle Pulse Badge for Active Examination */
+@keyframes softPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.85;
+  }
+}
+
+.pulse-badge {
+  animation: softPulse 2s infinite ease-in-out;
+}
+
+/* Dental Odontogram Children Map */
+.tooth-item {
+  width: 44px;
+  height: 52px;
+  border: 2px solid #cbd5e1;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  background-color: #ffffff;
+  transition: all 180ms ease;
+  user-select: none;
+}
+
+.tooth-item:hover {
+  border-color: var(--primary);
+  transform: scale(1.08);
+}
+
+.tooth-item.status-sehat {
+  background-color: #ecfdf5;
+  border-color: #10b981;
+  color: #065f46;
+}
+
+.tooth-item.status-karies {
+  background-color: #fef2f2;
+  border-color: #f43f5e;
+  color: #9f1239;
+}
+
+.tooth-item.status-tambal {
+  background-color: #eff6ff;
+  border-color: #3b82f6;
+  color: #1e40af;
+}
+
+.tooth-item.status-cabut {
+  background-color: #f3f4f6;
+  border-color: #9ca3af;
+  color: #6b7280;
+  text-decoration: line-through;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Print Styles for Tickets & Invoices */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .printable-area, .printable-area * {
+    visibility: visible;
+  }
+  .printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 10px;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
