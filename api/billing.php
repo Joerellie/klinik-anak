@@ -10,29 +10,27 @@ if ($action === 'get_invoice') {
     $id_antrean = intval($_GET['id_antrean'] ?? 0);
     $id_tx = intval($_GET['id_tx'] ?? 0);
 
+    $sqlBase = "SELECT tx.*, q.nomor_antrean, q.poli_tujuan, q.keluhan_awal,
+                       p.nama_anak, p.kode_rm, p.tanggal_lahir, p.nama_ortu, p.no_hp,
+                       mr.diagnosis, mr.resep_obat, mr.tindakan_medis, mr.catatan_gigi, mr.edukasi_ortu, mr.jadwal_kontrol,
+                       vs.tensi_darah, vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.status_gizi,
+                       vr.nama_vaksin, vr.dosis_ke, vr.nomor_batch,
+                       u.nama_lengkap AS nama_kasir,
+                       ud.nama_lengkap AS nama_dokter
+                FROM transactions tx
+                JOIN queues q ON tx.id_antrean = q.id
+                JOIN patients p ON tx.id_pasien = p.id
+                LEFT JOIN medical_records mr ON q.id = mr.id_antrean
+                LEFT JOIN vital_signs vs ON q.id = vs.id_antrean
+                LEFT JOIN vaccination_records vr ON q.id = vr.id_antrean
+                LEFT JOIN users u ON tx.id_kasir = u.id
+                LEFT JOIN users ud ON mr.id_dokter = ud.id";
+
     if ($id_antrean > 0) {
-        $stmt = $pdo->prepare("SELECT tx.*, q.nomor_antrean, q.poli_tujuan,
-                                      p.nama_anak, p.kode_rm, p.tanggal_lahir, p.nama_ortu, p.no_hp,
-                                      mr.diagnosis, mr.resep_obat, mr.tindakan_medis,
-                                      u.nama_lengkap AS nama_kasir
-                               FROM transactions tx
-                               JOIN queues q ON tx.id_antrean = q.id
-                               JOIN patients p ON tx.id_pasien = p.id
-                               LEFT JOIN medical_records mr ON q.id = mr.id_antrean
-                               LEFT JOIN users u ON tx.id_kasir = u.id
-                               WHERE tx.id_antrean = ?");
+        $stmt = $pdo->prepare("$sqlBase WHERE tx.id_antrean = ? LIMIT 1");
         $stmt->execute([$id_antrean]);
     } else {
-        $stmt = $pdo->prepare("SELECT tx.*, q.nomor_antrean, q.poli_tujuan,
-                                      p.nama_anak, p.kode_rm, p.tanggal_lahir, p.nama_ortu, p.no_hp,
-                                      mr.diagnosis, mr.resep_obat, mr.tindakan_medis,
-                                      u.nama_lengkap AS nama_kasir
-                               FROM transactions tx
-                               JOIN queues q ON tx.id_antrean = q.id
-                               JOIN patients p ON tx.id_pasien = p.id
-                               LEFT JOIN medical_records mr ON q.id = mr.id_antrean
-                               LEFT JOIN users u ON tx.id_kasir = u.id
-                               WHERE tx.id = ?");
+        $stmt = $pdo->prepare("$sqlBase WHERE tx.id = ? LIMIT 1");
         $stmt->execute([$id_tx]);
     }
 
@@ -54,7 +52,7 @@ if ($action === 'get_invoice') {
     jsonResponse(['success' => true, 'invoice' => $invoice]);
 }
 
-// Process payment
+// Process payment (and optionally adjust costs at cashier desk)
 if ($action === 'pay') {
     $input = json_decode(file_get_contents('php://input'), true) ?: $_POST;
     $id_antrean = intval($input['id_antrean'] ?? 0);
@@ -67,18 +65,36 @@ if ($action === 'pay') {
 
     $user = getLoggedInUser();
     $id_kasir = $user['id'] ?? 1;
+    $now = date('Y-m-d H:i:s');
+
+    // Optional cost overrides from cashier modal
+    $chk = $pdo->prepare("SELECT * FROM transactions WHERE id_antrean = ?");
+    $chk->execute([$id_antrean]);
+    $tx = $chk->fetch();
+    if (!$tx) {
+        jsonResponse(['success' => false, 'error' => 'Nota transaksi tidak ditemukan.'], 404);
+    }
+
+    $biaya_konsultasi = isset($input['biaya_konsultasi']) ? intval($input['biaya_konsultasi']) : intval($tx['biaya_konsultasi']);
+    $biaya_tindakan = isset($input['biaya_tindakan']) ? intval($input['biaya_tindakan']) : intval($tx['biaya_tindakan']);
+    $biaya_obat_vaksin = isset($input['biaya_obat_vaksin']) ? intval($input['biaya_obat_vaksin']) : intval($tx['biaya_obat_vaksin']);
+    $biaya_admin = isset($input['biaya_admin']) ? intval($input['biaya_admin']) : intval($tx['biaya_admin']);
+    $total_biaya = $biaya_konsultasi + $biaya_tindakan + $biaya_obat_vaksin + $biaya_admin;
+
+    $finalCatatan = !empty($catatan) ? $catatan : $tx['catatan'];
 
     // Update transaction
-    $upTx = $pdo->prepare("UPDATE transactions SET status_bayar = 'lunas', metode_pembayaran = ?, waktu_bayar = NOW(), id_kasir = ?, catatan = COALESCE(NULLIF(?, ''), catatan) WHERE id_antrean = ?");
-    $upTx->execute([$metode, $id_kasir, $catatan, $id_antrean]);
+    $upTx = $pdo->prepare("UPDATE transactions SET biaya_konsultasi = ?, biaya_tindakan = ?, biaya_obat_vaksin = ?, biaya_admin = ?, total_biaya = ?, status_bayar = 'lunas', metode_pembayaran = ?, waktu_bayar = ?, id_kasir = ?, catatan = ? WHERE id_antrean = ?");
+    $upTx->execute([$biaya_konsultasi, $biaya_tindakan, $biaya_obat_vaksin, $biaya_admin, $total_biaya, $metode, $now, $id_kasir, $finalCatatan, $id_antrean]);
 
     // Update queue status to 'selesai'
-    $upQ = $pdo->prepare("UPDATE queues SET status = 'selesai', waktu_selesai_kasir = NOW() WHERE id = ?");
-    $upQ->execute([$id_antrean]);
+    $upQ = $pdo->prepare("UPDATE queues SET status = 'selesai', waktu_selesai_kasir = ? WHERE id = ?");
+    $upQ->execute([$now, $id_antrean]);
 
     jsonResponse([
         'success' => true,
         'message' => 'Pembayaran berhasil dikonfirmasi! Pelayanan pasien selesai.',
+        'total_biaya' => $total_biaya
     ]);
 }
 
@@ -139,4 +155,3 @@ if ($action === 'daily_report') {
 }
 
 jsonResponse(['success' => false, 'error' => 'Action tidak valid.'], 400);
-

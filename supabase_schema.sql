@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS vital_signs (
     id_antrean INT NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
     id_pasien INT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
     id_asisten INT DEFAULT NULL,
+    tensi_darah VARCHAR(30) DEFAULT NULL,
     berat_badan NUMERIC(5,2) NOT NULL,
     tinggi_badan NUMERIC(5,2) NOT NULL,
     suhu_tubuh NUMERIC(4,1) NOT NULL,
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS vital_signs (
     catatan_asisten TEXT DEFAULT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE vital_signs ADD COLUMN IF NOT EXISTS tensi_darah VARCHAR(30) DEFAULT NULL;
 
 -- 5. Table: medical_records (Rekam Medis Dokter & Catatan Lengkap)
 CREATE TABLE IF NOT EXISTS medical_records (

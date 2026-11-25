@@ -143,8 +143,11 @@ function loadActiveTabData() {
     loadCashierBilling();
   } else if (activeTab === 'asisten') {
     loadAsistenQueues();
+    loadAsistenVaccineStock('vaksin');
   } else if (activeTab === 'dokter') {
     loadDokterQueues();
+  } else if (activeTab === 'kasir') {
+    loadCashierBilling();
   } else if (activeTab === 'stok') {
     loadStockTable();
   } else if (activeTab === 'laporan') {
@@ -400,34 +403,53 @@ async function loadCashierBilling() {
   if (!container) return;
 
   try {
-    const res = await fetch('api/queues.php?action=list&status=kasir');
+    const res = await fetch('api/queues.php?action=list&status=kasir_all');
     const data = await res.json();
 
+    const dedicatedContainer = document.getElementById('table-cashier-dedicated');
+
     if (data.success && data.data.length > 0) {
-      container.innerHTML = data.data.map(item => `
-        <tr class="hover:bg-emerald-50/40 border-b border-slate-100 transition-colors">
+      // Sort waiting payment first, then lunas
+      const sorted = [...data.data].sort((a, b) => {
+        if (a.status_bayar === 'lunas' && b.status_bayar !== 'lunas') return 1;
+        if (a.status_bayar !== 'lunas' && b.status_bayar === 'lunas') return -1;
+        return b.id - a.id;
+      });
+
+      const rowsHtml = sorted.map(item => {
+        const isLunas = item.status_bayar === 'lunas';
+        return `
+        <tr class="${isLunas ? 'bg-slate-50/60' : 'hover:bg-emerald-50/40'} border-b border-slate-100 transition-colors">
           <td class="p-3 font-bold font-mono text-cyan-900">${item.nomor_antrean}</td>
           <td class="p-3">
             <div class="font-bold text-slate-800 text-sm">${item.nama_anak}</div>
             <div class="text-xs text-slate-500">${item.kode_rm} • Wali: ${item.nama_ortu}</div>
           </td>
-          <td class="p-3 text-xs capitalize font-semibold">${item.poli_tujuan}</td>
+          <td class="p-3">
+            <div class="text-xs font-bold text-slate-800 capitalize">Poli ${item.poli_tujuan}</div>
+            <div class="text-[11px] text-slate-500 max-w-xs truncate">${item.diagnosis || item.keluhan_awal || '-'}</div>
+          </td>
           <td class="p-3 text-sm font-extrabold text-emerald-700">${item.total_biaya ? formatRupiah(item.total_biaya) : 'Siap Dihitung'}</td>
           <td class="p-3">
-            <span class="px-2.5 py-1 rounded-full text-xs font-bold ${item.status_bayar === 'lunas' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
-              ${item.status_bayar === 'lunas' ? 'LUNAS' : 'MENUNGGU BAYAR'}
+            <span class="px-2.5 py-1 rounded-full text-xs font-bold ${isLunas ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
+              ${isLunas ? `LUNAS (${(item.metode_pembayaran || 'TUNAI').toUpperCase()})` : 'MENUNGGU BAYAR'}
             </span>
           </td>
           <td class="p-3 text-right">
             <button onclick="openCashierInvoiceModal(${item.id})"
-                    class="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm">
-              <i class="fa-solid fa-receipt mr-1"></i> Proses Nota Kasir
+                    class="px-3 py-1.5 rounded-xl text-xs font-bold ${isLunas ? 'bg-slate-800 text-white hover:bg-slate-900' : 'bg-emerald-600 text-white hover:bg-emerald-700'} shadow-sm">
+              <i class="fa-solid ${isLunas ? 'fa-print' : 'fa-receipt'} mr-1"></i> ${isLunas ? 'Lihat / Cetak Nota' : 'Proses Nota Kasir'}
             </button>
           </td>
         </tr>
-      `).join('');
+      `}).join('');
+
+      container.innerHTML = rowsHtml;
+      if (dedicatedContainer) dedicatedContainer.innerHTML = rowsHtml;
     } else {
-      container.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">Tidak ada antrean yang menunggu pembayaran di kasir saat ini.</td></tr>`;
+      const emptyHtml = `<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">Tidak ada antrean yang menunggu pembayaran di kasir saat ini.</td></tr>`;
+      container.innerHTML = emptyHtml;
+      if (dedicatedContainer) dedicatedContainer.innerHTML = emptyHtml;
     }
   } catch (e) {
     console.error(e);
@@ -454,30 +476,112 @@ async function openCashierInvoiceModal(idAntrean) {
     document.getElementById('inv-no-nota').textContent = inv.no_nota;
     document.getElementById('inv-patient-name').textContent = inv.nama_anak;
     document.getElementById('inv-patient-rm').textContent = inv.kode_rm;
-    document.getElementById('inv-patient-age').textContent = inv.usia_formatted;
-    document.getElementById('inv-diagnosis').textContent = inv.diagnosis || 'Pemeriksaan Rutin';
-    document.getElementById('inv-prescription').textContent = inv.resep_obat || 'Tidak ada resep obat khusus';
 
-    document.getElementById('inv-cost-konsul').textContent = inv.biaya_konsultasi_fmt;
-    document.getElementById('inv-cost-tindakan').textContent = inv.biaya_tindakan_fmt;
-    document.getElementById('inv-cost-obat').textContent = inv.biaya_obat_vaksin_fmt;
-    document.getElementById('inv-cost-admin').textContent = inv.biaya_admin_fmt;
-    document.getElementById('inv-total-cost').textContent = inv.total_biaya_fmt;
+    let vitalsSummary = inv.usia_formatted;
+    if (inv.berat_badan) {
+      vitalsSummary += ` • BB: ${inv.berat_badan}kg, Suhu: ${inv.suhu_tubuh}°C, Tensi: ${inv.tensi_darah || '100/65 mmHg'}`;
+    }
+    document.getElementById('inv-patient-age').textContent = vitalsSummary;
+    document.getElementById('inv-diagnosis').textContent = inv.diagnosis || 'Pemeriksaan Rutin';
+
+    const tindakanParts = [];
+    if (inv.tindakan_medis) tindakanParts.push(inv.tindakan_medis);
+    if (inv.catatan_gigi) tindakanParts.push(`Gigi: ${inv.catatan_gigi}`);
+    if (inv.nama_vaksin) tindakanParts.push(`Vaksin: ${inv.nama_vaksin} (Dosis ${inv.dosis_ke || 1}, Batch: ${inv.nomor_batch || '-'})`);
+    const tindakanEl = document.getElementById('inv-tindakan-detail');
+    if (tindakanEl) {
+      tindakanEl.textContent = tindakanParts.length > 0 ? tindakanParts.join(' | ') : '-';
+    }
+
+    let rxText = inv.resep_obat || 'Tidak ada resep obat khusus';
+    if (inv.nama_vaksin && !rxText.includes(inv.nama_vaksin)) {
+      rxText = `[Imunisasi: ${inv.nama_vaksin} - Batch ${inv.nomor_batch || '-'}]\n` + rxText;
+    }
+    document.getElementById('inv-prescription').textContent = rxText;
+
+    // Populate editable cost inputs
+    const inKonsul = document.getElementById('inv-input-konsul');
+    const inTindakan = document.getElementById('inv-input-tindakan');
+    const inObat = document.getElementById('inv-input-obat');
+    const inAdmin = document.getElementById('inv-input-admin');
+
+    if (inKonsul) inKonsul.value = inv.biaya_konsultasi || 75000;
+    if (inTindakan) inTindakan.value = inv.biaya_tindakan || 0;
+    if (inObat) inObat.value = inv.biaya_obat_vaksin || 0;
+    if (inAdmin) inAdmin.value = inv.biaya_admin || 10000;
+
+    if (inv.metode_pembayaran) {
+      document.getElementById('inv-payment-method').value = inv.metode_pembayaran;
+    }
+
+    const totalCostNum = parseInt(inv.total_biaya || 85000, 10);
+    const cashInput = document.getElementById('inv-cash-received');
+    if (cashInput) cashInput.value = totalCostNum;
+
+    recalcCashierModalTotal();
 
     const payBtn = document.getElementById('btn-confirm-payment');
-    if (inv.status_bayar === 'lunas') {
+    const isLunas = inv.status_bayar === 'lunas';
+    if (inKonsul) inKonsul.disabled = isLunas;
+    if (inTindakan) inTindakan.disabled = isLunas;
+    if (inObat) inObat.disabled = isLunas;
+    if (inAdmin) inAdmin.disabled = isLunas;
+
+    if (isLunas) {
       payBtn.disabled = true;
       payBtn.innerHTML = '<i class="fa-solid fa-check-double mr-1.5"></i> Sudah Lunas';
-      payBtn.className = 'px-4 py-2 rounded-xl text-xs font-bold bg-slate-200 text-slate-500 cursor-not-allowed';
+      payBtn.className = 'px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-200 text-slate-500 cursor-not-allowed';
     } else {
       payBtn.disabled = false;
-      payBtn.innerHTML = '<i class="fa-solid fa-money-bill-wave mr-1.5"></i> Konfirmasi Pembayaran & Cetak Nota';
+      payBtn.innerHTML = '<i class="fa-solid fa-money-bill-wave mr-1.5"></i> Konfirmasi Pembayaran & Lunas';
       payBtn.className = 'px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-md';
     }
 
     modal.classList.remove('hidden');
   } catch (err) {
     showToast('Gagal memuat rincian tagihan kasir', 'error');
+  }
+}
+
+function recalcCashierModalTotal() {
+  const k = parseInt(document.getElementById('inv-input-konsul')?.value || 0, 10);
+  const t = parseInt(document.getElementById('inv-input-tindakan')?.value || 0, 10);
+  const o = parseInt(document.getElementById('inv-input-obat')?.value || 0, 10);
+  const a = parseInt(document.getElementById('inv-input-admin')?.value || 0, 10);
+  const total = k + t + o + a;
+
+  document.getElementById('inv-cost-konsul').textContent = formatRupiah(k);
+  document.getElementById('inv-cost-tindakan').textContent = formatRupiah(t);
+  document.getElementById('inv-cost-obat').textContent = formatRupiah(o);
+  document.getElementById('inv-cost-admin').textContent = formatRupiah(a);
+  document.getElementById('inv-total-cost').textContent = formatRupiah(total);
+
+  const cashInput = document.getElementById('inv-cash-received');
+  const changeEl = document.getElementById('inv-cash-change');
+  if (cashInput && changeEl) {
+    const received = parseInt(cashInput.value || 0, 10);
+    const diff = received - total;
+    if (diff >= 0) {
+      changeEl.textContent = formatRupiah(diff);
+      changeEl.className = 'text-sm font-extrabold text-emerald-700';
+    } else {
+      changeEl.textContent = `Kurang ${formatRupiah(Math.abs(diff))}`;
+      changeEl.className = 'text-sm font-extrabold text-rose-600';
+    }
+  }
+}
+
+function setQuickCashReceived(amount) {
+  const k = parseInt(document.getElementById('inv-input-konsul')?.value || 0, 10);
+  const t = parseInt(document.getElementById('inv-input-tindakan')?.value || 0, 10);
+  const o = parseInt(document.getElementById('inv-input-obat')?.value || 0, 10);
+  const a = parseInt(document.getElementById('inv-input-admin')?.value || 0, 10);
+  const total = k + t + o + a;
+
+  const cashInput = document.getElementById('inv-cash-received');
+  if (cashInput) {
+    cashInput.value = amount === 'pas' ? total : amount;
+    recalcCashierModalTotal();
   }
 }
 
@@ -491,22 +595,38 @@ async function submitProcessPayment() {
   if (!currentInvoiceData) return;
 
   const paymentMethod = document.getElementById('inv-payment-method').value;
+  const biaya_konsultasi = parseInt(document.getElementById('inv-input-konsul')?.value || currentInvoiceData.biaya_konsultasi || 75000, 10);
+  const biaya_tindakan = parseInt(document.getElementById('inv-input-tindakan')?.value || currentInvoiceData.biaya_tindakan || 0, 10);
+  const biaya_obat_vaksin = parseInt(document.getElementById('inv-input-obat')?.value || currentInvoiceData.biaya_obat_vaksin || 0, 10);
+  const biaya_admin = parseInt(document.getElementById('inv-input-admin')?.value || currentInvoiceData.biaya_admin || 10000, 10);
+  const total = biaya_konsultasi + biaya_tindakan + biaya_obat_vaksin + biaya_admin;
+  const received = parseInt(document.getElementById('inv-cash-received')?.value || total, 10);
+
+  if (paymentMethod === 'tunai' && received < total) {
+    showToast('Nominal uang tunai yang diterima kurang dari total tagihan!', 'error');
+    return;
+  }
+
   try {
     const res = await fetch('api/billing.php?action=pay', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id_antrean: currentInvoiceData.id_antrean,
-        metode_pembayaran: paymentMethod
+        metode_pembayaran: paymentMethod,
+        biaya_konsultasi,
+        biaya_tindakan,
+        biaya_obat_vaksin,
+        biaya_admin
       })
     });
     const result = await res.json();
     if (result.success) {
       showToast('Pembayaran berhasil dikonfirmasi! Pelayanan pasien tuntas.', 'success');
-      window.print(); // Prompt print receipt
       closeCashierInvoiceModal();
       loadCashierBilling();
       loadResepsionisQueues();
+      loadDailyReport();
     } else {
       showToast(result.error, 'error');
     }
@@ -516,7 +636,7 @@ async function submitProcessPayment() {
 }
 
 // ==========================================
-// 2. ASISTEN DOKTER MODULE (Tanda Vital & Stok)
+// 2. ASISTEN DOKTER MODULE (Tanda Vital: Tensi/Suhu/Berat & Stok Vaksin)
 // ==========================================
 
 async function loadAsistenQueues() {
@@ -528,7 +648,7 @@ async function loadAsistenQueues() {
     const data = await res.json();
 
     if (data.success && data.data.length > 0) {
-      // Filter queues relevant to assistant (waiting for assistant or currently in assistant room)
+      // Filter queues relevant to assistant
       const relevant = data.data.filter(q => ['menunggu_asisten', 'ruang_asisten', 'menunggu_dokter'].includes(q.status));
 
       if (relevant.length === 0) {
@@ -545,14 +665,21 @@ async function loadAsistenQueues() {
               <div class="font-bold text-slate-800 text-sm">${q.nama_anak}</div>
               <div class="text-xs text-slate-500">${q.kode_rm} • ${q.usia_formatted}</div>
             </td>
-            <td class="p-3 text-xs capitalize font-semibold">${q.poli_tujuan}</td>
+            <td class="p-3 text-xs capitalize font-semibold">Poli ${q.poli_tujuan}</td>
             <td class="p-3 text-xs text-slate-600 max-w-xs truncate">${q.keluhan_awal || '-'}</td>
             <td class="p-3">
               ${q.berat_badan ? `
-                <span class="text-xs font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                  BB: ${q.berat_badan}kg, TB: ${q.tinggi_badan}cm, Suhu: ${q.suhu_tubuh}°C
-                </span>
-              ` : '<span class="text-xs text-slate-400 italic">Belum diinput</span>'}
+                <div class="inline-flex flex-wrap items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
+                  <span><i class="fa-solid fa-gauge-high text-indigo-600 mr-0.5"></i> Tensi: <strong>${q.tensi_darah || '100/65 mmHg'}</strong></span>
+                  <span>•</span>
+                  <span>Suhu: <strong class="${parseFloat(q.suhu_tubuh) >= 37.8 ? 'text-rose-600' : ''}">${q.suhu_tubuh}°C</strong></span>
+                  <span>•</span>
+                  <span>BB: <strong>${q.berat_badan}kg</strong></span>
+                  <span>•</span>
+                  <span>TB: <strong>${q.tinggi_badan}cm</strong></span>
+                </div>
+                ${q.catatan_asisten ? `<div class="text-[11px] text-slate-500 mt-1 truncate max-w-xs">${q.catatan_asisten}</div>` : ''}
+              ` : '<span class="text-xs text-amber-600 font-semibold italic">Belum diukur (Menunggu Input)</span>'}
             </td>
             <td class="p-3 text-right">
               <div class="flex items-center justify-end gap-1.5">
@@ -560,9 +687,9 @@ async function loadAsistenQueues() {
                         class="p-2 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200" title="Panggil Suara">
                   <i class="fa-solid fa-bullhorn text-xs"></i>
                 </button>
-                <button onclick="openVitalsModal(${q.id}, '${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', '${q.usia_formatted}', '${q.keluhan_awal ? q.keluhan_awal.replace(/'/g, "\\'") : ''}')"
+                <button onclick="openVitalsModal(${q.id}, '${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', '${q.usia_formatted}', '${q.keluhan_awal ? q.keluhan_awal.replace(/'/g, "\\'") : ''}', '${q.poli_tujuan}')"
                         class="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 shadow-sm">
-                  <i class="fa-solid fa-weight-scale mr-1"></i> Input Tanda Vital
+                  <i class="fa-solid fa-heart-pulse mr-1"></i> ${q.berat_badan ? 'Edit Tensi & Vital' : 'Input Tensi & Vital'}
                 </button>
               </div>
             </td>
@@ -577,16 +704,114 @@ async function loadAsistenQueues() {
   }
 }
 
-// Open Vitals Modal
-function openVitalsModal(idAntrean, noAntrean, namaAnak, usia, keluhan) {
+// Load Vaccine & Medicine Stock inside Asisten Panel
+let currentAsistenStockFilter = 'vaksin';
+async function loadAsistenVaccineStock(category = currentAsistenStockFilter) {
+  currentAsistenStockFilter = category;
+  const container = document.getElementById('table-asisten-vaccine-stock');
+  if (!container) return;
+
+  const btnVaksin = document.getElementById('btn-asisten-filter-vaksin');
+  const btnAll = document.getElementById('btn-asisten-filter-all');
+  if (btnVaksin && btnAll) {
+    if (category === 'vaksin') {
+      btnVaksin.className = 'px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white shadow-xs';
+      btnAll.className = 'px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200';
+    } else {
+      btnAll.className = 'px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white shadow-xs';
+      btnVaksin.className = 'px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200';
+    }
+  }
+
+  try {
+    const url = category ? `api/stock.php?action=list&category=${encodeURIComponent(category)}` : 'api/stock.php?action=list';
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.success && data.data.length > 0) {
+      container.innerHTML = data.data.map(item => `
+        <tr class="hover:bg-slate-50 border-b border-slate-100 transition-colors">
+          <td class="p-3 font-mono text-xs font-semibold text-slate-500">${item.kode}</td>
+          <td class="p-3">
+            <div class="font-bold text-slate-800 text-sm">${item.nama_item}</div>
+            <div class="text-xs text-slate-500">${item.deskripsi || '-'}</div>
+          </td>
+          <td class="p-3">
+            <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+              item.kategori === 'vaksin' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+              item.kategori === 'obat' ? 'bg-cyan-50 text-cyan-700 border border-cyan-200' :
+              'bg-slate-100 text-slate-700'
+            }">${item.kategori.toUpperCase()}</span>
+          </td>
+          <td class="p-3 text-sm font-extrabold ${item.is_low ? 'text-rose-600' : 'text-slate-800'}">
+            ${item.stok} <span class="text-xs font-normal text-slate-500">${item.satuan}</span>
+            ${item.is_low ? '<span class="ml-1 text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-bold">STOK MENIPIS</span>' : ''}
+          </td>
+          <td class="p-3 text-xs font-semibold text-slate-700">${item.harga_formatted}</td>
+          <td class="p-3 text-right">
+            <div class="inline-flex items-center gap-1">
+              <button onclick="adjustItemStock(${item.id}, 10)" class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold hover:bg-emerald-100" title="Restock +10">+10</button>
+              <button onclick="adjustItemStock(${item.id}, 1)" class="px-2.5 py-1 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-lg text-xs font-bold hover:bg-cyan-100" title="Tambah +1">+1</button>
+              <button onclick="adjustItemStock(${item.id}, -1)" class="px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold hover:bg-rose-100" title="Pakai Dosis -1">-1</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    } else {
+      container.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">Tidak ada item stok vaksin ditemukan.</td></tr>`;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// Open Vitals Modal (with Tensi, Suhu, BB, TB, and Vaccine Preparation dropdown)
+async function openVitalsModal(idAntrean, noAntrean, namaAnak, usia, keluhan, poli = 'umum') {
   const modal = document.getElementById('modal-vitals-input');
   if (!modal) return;
 
+  const form = document.getElementById('form-vitals-input');
+  if (form) form.reset();
+
   document.getElementById('vital-id-antrean').value = idAntrean;
+  document.getElementById('vital-tensi').value = '100/65 mmHg';
   document.getElementById('vital-header-info').innerHTML = `
-    <div class="font-extrabold text-lg text-slate-900">${noAntrean} - ${namaAnak}</div>
-    <div class="text-xs text-slate-500">Usia: ${usia} • Keluhan Awal: ${keluhan || '-'}</div>
+    <div class="flex items-center justify-between">
+      <div class="font-extrabold text-base text-slate-900">${noAntrean} — ${namaAnak}</div>
+      <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-200/70 text-amber-950 uppercase">Poli ${poli}</span>
+    </div>
+    <div class="text-xs text-slate-600 mt-0.5">Usia: <strong>${usia}</strong> • Keluhan: <em>"${keluhan || '-'}"</em></div>
   `;
+
+  // Populate vaccine preparation dropdown from stock
+  const vSelect = document.getElementById('vital-vaksin-prep');
+  if (vSelect) {
+    try {
+      const sRes = await fetch('api/stock.php?action=list&category=vaksin');
+      const sData = await sRes.json();
+      if (sData.success) {
+        vSelect.innerHTML = `<option value="">-- Tidak Menyiapkan Vaksin / Pemeriksaan Non-Vaksin --</option>` +
+          sData.data.map(v => `<option value="${v.nama_item} (Sisa Stok: ${v.stok} ${v.satuan})">${v.nama_item} — Stok: ${v.stok} ${v.satuan}</option>`).join('');
+      }
+    } catch (e) {}
+  }
+
+  // Load existing vitals if already filled earlier
+  try {
+    const vRes = await fetch(`api/vitals.php?action=get&id_antrean=${idAntrean}`);
+    const vData = await vRes.json();
+    if (vData.success && vData.data) {
+      const vs = vData.data;
+      document.getElementById('vital-tensi').value = vs.tensi_darah || '100/65 mmHg';
+      document.getElementById('vital-bb').value = vs.berat_badan || '';
+      document.getElementById('vital-tb').value = vs.tinggi_badan || '';
+      document.getElementById('vital-suhu').value = vs.suhu_tubuh || '';
+      document.getElementById('vital-lk').value = vs.lingkar_kepala || '';
+      document.getElementById('vital-catatan').value = vs.catatan_asisten || '';
+      calculateNutritionalStatus();
+      checkTemperatureAlert();
+    }
+  } catch (e) {}
 
   // Set status to ruang_asisten so live queue board shows active
   fetch('api/queues.php?action=update_status', {
@@ -596,6 +821,25 @@ function openVitalsModal(idAntrean, noAntrean, namaAnak, usia, keluhan) {
   });
 
   modal.classList.remove('hidden');
+}
+
+function checkTemperatureAlert() {
+  const suhu = parseFloat(document.getElementById('vital-suhu')?.value || 0);
+  const alertEl = document.getElementById('vital-temp-alert');
+  if (!alertEl) return;
+  if (!suhu) {
+    alertEl.innerHTML = 'Normal: 36.5°C – 37.5°C';
+    alertEl.className = 'text-[10px] font-semibold text-slate-400 mt-1';
+  } else if (suhu >= 38.5) {
+    alertEl.innerHTML = '<i class="fa-solid fa-fire text-rose-600"></i> Demam Tinggi (Hiperpireksia) — Segera prioritaskan!';
+    alertEl.className = 'text-[10px] font-extrabold text-rose-600 mt-1';
+  } else if (suhu >= 37.6) {
+    alertEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-amber-600"></i> Demam / Febris (> 37.5°C)';
+    alertEl.className = 'text-[10px] font-bold text-amber-600 mt-1';
+  } else {
+    alertEl.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-600"></i> Suhu Tubuh Normal (Afebris)';
+    alertEl.className = 'text-[10px] font-bold text-emerald-600 mt-1';
+  }
 }
 
 function closeVitalsModal() {
@@ -648,10 +892,12 @@ async function submitVitals(e) {
   const form = e.target;
   const data = {
     id_antrean: document.getElementById('vital-id-antrean').value,
+    tensi_darah: document.getElementById('vital-tensi').value,
     berat_badan: form.berat_badan.value,
     tinggi_badan: form.tinggi_badan.value,
     suhu_tubuh: form.suhu_tubuh.value,
     lingkar_kepala: form.lingkar_kepala.value,
+    vaksin_disiapkan: document.getElementById('vital-vaksin-prep')?.value || '',
     catatan_asisten: form.catatan_asisten.value
   };
 
@@ -680,8 +926,11 @@ async function submitVitals(e) {
 // 3. DOKTER MODULE (EMR, Odontogram Gigi, Vaksinasi, Resep)
 // ==========================================
 
+let cachedStockItems = [];
+
 async function loadDokterQueues() {
   const container = document.getElementById('table-dokter-queues');
+  const completedContainer = document.getElementById('table-dokter-completed');
   if (!container) return;
 
   try {
@@ -689,51 +938,93 @@ async function loadDokterQueues() {
     const data = await res.json();
 
     if (data.success && data.data.length > 0) {
-      // Filter queues ready for doctor or currently in doctor room
-      const doctorQueues = data.data.filter(q => ['menunggu_dokter', 'ruang_dokter'].includes(q.status));
+      // 1. Patients waiting for doctor or currently in doctor room (or waiting assistant if doctor wants to examine directly)
+      const doctorQueues = data.data.filter(q => ['menunggu_dokter', 'ruang_dokter', 'menunggu_asisten', 'ruang_asisten'].includes(q.status));
+      // 2. Patients already examined today (in kasir or selesai)
+      const completedQueues = data.data.filter(q => ['kasir', 'selesai'].includes(q.status));
 
       if (doctorQueues.length === 0) {
         container.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">Tidak ada pasien yang menunggu di ruang periksa saat ini.</td></tr>`;
-        return;
+      } else {
+        container.innerHTML = doctorQueues.map(q => {
+          let isInside = q.status === 'ruang_dokter';
+          return `
+            <tr class="${isInside ? 'bg-cyan-50/70 border-cyan-200' : 'hover:bg-slate-50 border-slate-100'} border-b transition-colors">
+              <td class="p-3 font-extrabold font-mono text-cyan-900">${q.nomor_antrean}</td>
+              <td class="p-3">
+                <div class="font-bold text-slate-800 text-sm">${q.nama_anak}</div>
+                <div class="text-xs text-slate-500">${q.kode_rm} • ${q.usia_formatted}</div>
+              </td>
+              <td class="p-3 text-xs capitalize font-semibold">Poli ${q.poli_tujuan}</td>
+              <td class="p-3">
+                ${q.berat_badan ? `
+                  <div class="text-xs font-semibold text-slate-800">
+                    Tensi: <strong class="text-indigo-700">${q.tensi_darah || '100/65 mmHg'}</strong> • Suhu: <strong class="text-rose-600">${q.suhu_tubuh}°C</strong>
+                  </div>
+                  <div class="text-[11px] text-cyan-800 font-medium">
+                    BB: ${q.berat_badan}kg • TB: ${q.tinggi_badan}cm • ${q.status_gizi || 'Normal'}
+                  </div>
+                  ${q.catatan_asisten ? `<div class="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded mt-0.5 inline-block border border-amber-200">${q.catatan_asisten}</div>` : ''}
+                ` : '<span class="text-xs text-amber-600 italic">Tanda vital belum diinput asisten</span>'}
+              </td>
+              <td class="p-3 text-xs text-slate-600 max-w-xs truncate">${q.keluhan_awal || '-'}</td>
+              <td class="p-3 text-right">
+                <div class="flex items-center justify-end gap-1.5">
+                  <button onclick="callPatientVoice('${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', 'Ruang Dokter Spesialis Anak')"
+                          class="p-2 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-200" title="Panggil ke Ruang Dokter">
+                    <i class="fa-solid fa-bullhorn text-xs"></i>
+                  </button>
+                  <button onclick="viewPatientHistoryLog(${q.id_pasien}, '${q.kode_rm}')"
+                          class="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1" title="Lihat History Keluhan & Rekam Medis">
+                    <i class="fa-solid fa-clock-rotate-left text-xs"></i>
+                    <span class="hidden xl:inline">History</span>
+                  </button>
+                  <button onclick="openDoctorWorkspace(${q.id}, '${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', '${q.usia_formatted}', '${q.poli_tujuan}', '${q.berat_badan || ''}', '${q.tinggi_badan || ''}', '${q.suhu_tubuh || ''}', '${q.status_gizi || ''}', '${q.keluhan_awal ? q.keluhan_awal.replace(/'/g, "\\'") : ''}', ${q.id_pasien}, '${q.kode_rm}', '${q.tensi_darah || '100/65 mmHg'}', '${q.catatan_asisten ? q.catatan_asisten.replace(/'/g, "\\'") : ''}')"
+                          class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-cyan-700 text-white hover:bg-cyan-800 shadow-sm">
+                    <i class="fa-solid fa-stethoscope mr-1"></i> Periksa Pasien
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
       }
 
-      container.innerHTML = doctorQueues.map(q => {
-        let isInside = q.status === 'ruang_dokter';
-        return `
-          <tr class="${isInside ? 'bg-cyan-50/70 border-cyan-200' : 'hover:bg-slate-50 border-slate-100'} border-b transition-colors">
-            <td class="p-3 font-extrabold font-mono text-cyan-900">${q.nomor_antrean}</td>
-            <td class="p-3">
-              <div class="font-bold text-slate-800 text-sm">${q.nama_anak}</div>
-              <div class="text-xs text-slate-500">${q.kode_rm} • ${q.usia_formatted}</div>
-            </td>
-            <td class="p-3 text-xs capitalize font-semibold">${q.poli_tujuan}</td>
-            <td class="p-3">
-              ${q.berat_badan ? `
-                <div class="text-xs font-semibold text-slate-700">BB: ${q.berat_badan}kg, TB: ${q.tinggi_badan}cm</div>
-                <div class="text-[11px] text-cyan-700 font-medium">Suhu: ${q.suhu_tubuh}°C • ${q.status_gizi || 'Normal'}</div>
-              ` : '<span class="text-xs text-amber-600 italic">Pemeriksaan awal belum lengkap</span>'}
-            </td>
-            <td class="p-3 text-xs text-slate-600 max-w-xs truncate">${q.keluhan_awal || '-'}</td>
-            <td class="p-3 text-right">
-              <div class="flex items-center justify-end gap-1.5">
-                <button onclick="callPatientVoice('${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', 'Ruang Dokter Spesialis Anak')"
-                        class="p-2 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-200" title="Panggil ke Ruang Dokter">
-                  <i class="fa-solid fa-bullhorn text-xs"></i>
-                </button>
-                <button onclick="viewPatientHistoryLog(${q.id_pasien}, '${q.kode_rm}')"
-                        class="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1" title="Lihat History Keluhan & Rekam Medis">
-                  <i class="fa-solid fa-clock-rotate-left text-xs"></i>
-                  <span class="hidden xl:inline">History</span>
-                </button>
-                <button onclick="openDoctorWorkspace(${q.id}, '${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', '${q.usia_formatted}', '${q.poli_tujuan}', '${q.berat_badan || ''}', '${q.tinggi_badan || ''}', '${q.suhu_tubuh || ''}', '${q.status_gizi || ''}', '${q.keluhan_awal ? q.keluhan_awal.replace(/'/g, "\\'") : ''}', ${q.id_pasien}, '${q.kode_rm}')"
-                        class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-cyan-700 text-white hover:bg-cyan-800 shadow-sm">
-                  <i class="fa-solid fa-stethoscope mr-1"></i> Periksa Pasien
-                </button>
-              </div>
-            </td>
-          </tr>
-        `;
-      }).join('');
+      if (completedContainer) {
+        if (completedQueues.length === 0) {
+          completedContainer.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">Belum ada pasien selesai diperiksa hari ini.</td></tr>`;
+        } else {
+          completedContainer.innerHTML = completedQueues.map(q => `
+            <tr class="hover:bg-slate-50 border-b border-slate-100 text-xs">
+              <td class="p-3 font-extrabold font-mono text-slate-700">${q.nomor_antrean}</td>
+              <td class="p-3">
+                <div class="font-bold text-slate-800">${q.nama_anak}</div>
+                <div class="text-[11px] text-slate-500">${q.kode_rm} • ${q.usia_formatted}</div>
+              </td>
+              <td class="p-3 capitalize font-semibold">Poli ${q.poli_tujuan}</td>
+              <td class="p-3">
+                <div class="font-bold text-slate-900">${q.diagnosis || '-'}</div>
+                <div class="text-[11px] text-slate-500 truncate max-w-xs">${q.tindakan_medis || q.catatan_gigi || q.resep_obat || '-'}</div>
+              </td>
+              <td class="p-3">
+                ${getStatusBadge(q.status)}
+              </td>
+              <td class="p-3 text-right">
+                <div class="flex items-center justify-end gap-1.5">
+                  <button onclick="viewPatientHistoryLog(${q.id_pasien}, '${q.kode_rm}')"
+                          class="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold">
+                    <i class="fa-solid fa-clock-rotate-left mr-1"></i> Log Pasien
+                  </button>
+                  <button onclick="openDoctorWorkspace(${q.id}, '${q.nomor_antrean}', '${q.nama_anak.replace(/'/g, "\\'")}', '${q.usia_formatted}', '${q.poli_tujuan}', '${q.berat_badan || ''}', '${q.tinggi_badan || ''}', '${q.suhu_tubuh || ''}', '${q.status_gizi || ''}', '${q.keluhan_awal ? q.keluhan_awal.replace(/'/g, "\\'") : ''}', ${q.id_pasien}, '${q.kode_rm}', '${q.tensi_darah || '100/65 mmHg'}', '${q.catatan_asisten ? q.catatan_asisten.replace(/'/g, "\\'") : ''}')"
+                          class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">
+                    <i class="fa-solid fa-pen-to-square mr-1"></i> Edit RM
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `).join('');
+        }
+      }
     } else {
       container.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">Tidak ada antrean menunggu dokter.</td></tr>`;
     }
@@ -747,13 +1038,18 @@ let activeExamQueueId = null;
 let activeExamPatientId = null;
 let activeExamKodeRm = null;
 
-function openDoctorWorkspace(idAntrean, noAntrean, namaAnak, usia, poli, bb, tb, suhu, gizi, keluhan, idPasien, kodeRm) {
+async function openDoctorWorkspace(idAntrean, noAntrean, namaAnak, usia, poli, bb, tb, suhu, gizi, keluhan, idPasien, kodeRm, tensi = '100/65 mmHg', catatanAsisten = '') {
   activeExamQueueId = idAntrean;
   activeExamPatientId = idPasien || null;
   activeExamKodeRm = kodeRm || null;
 
   const modal = document.getElementById('modal-doctor-emr');
   if (!modal) return;
+
+  const form = document.getElementById('form-doctor-emr');
+  if (form) form.reset();
+  dentalRecords = {};
+  initToothChart();
 
   document.getElementById('emr-id-antrean').value = idAntrean;
   document.getElementById('emr-patient-header').innerHTML = `
@@ -763,16 +1059,20 @@ function openDoctorWorkspace(idAntrean, noAntrean, namaAnak, usia, poli, bb, tb,
           <span class="text-xs font-bold px-2 py-0.5 rounded bg-cyan-100 text-cyan-800 font-mono">${noAntrean}</span>
           <span class="text-lg font-bold text-slate-900">${namaAnak}</span>
           <span class="text-xs text-slate-500">(${usia})</span>
+          <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 uppercase">Poli ${poli}</span>
         </div>
-        <div class="text-xs text-slate-500 mt-0.5">Keluhan Awal: <span class="font-medium text-slate-700">${keluhan || '-'}</span></div>
+        <div class="text-xs text-slate-600 mt-0.5">Keluhan Awal: <span class="font-bold text-slate-800">"${keluhan || '-'}"</span></div>
+        ${catatanAsisten ? `<div class="text-xs text-amber-900 mt-0.5"><i class="fa-solid fa-user-nurse text-amber-600 mr-1"></i> Catatan Asisten: <strong>${catatanAsisten}</strong></div>` : ''}
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <div class="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+        <div class="flex flex-wrap items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-cyan-200 text-xs shadow-2xs">
+          <div><span class="text-slate-400">Tensi:</span> <strong class="text-indigo-700">${tensi || '100/65 mmHg'}</strong></div>
+          <div class="text-slate-300">|</div>
+          <div><span class="text-slate-400">Suhu:</span> <strong class="text-rose-600">${suhu || '-'} °C</strong></div>
+          <div class="text-slate-300">|</div>
           <div><span class="text-slate-400">BB:</span> <strong class="text-slate-800">${bb || '-'} kg</strong></div>
           <div class="text-slate-300">|</div>
           <div><span class="text-slate-400">TB:</span> <strong class="text-slate-800">${tb || '-'} cm</strong></div>
-          <div class="text-slate-300">|</div>
-          <div><span class="text-slate-400">Suhu:</span> <strong class="text-rose-600">${suhu || '-'} °C</strong></div>
           <div class="text-slate-300">|</div>
           <div><span class="text-slate-400">Gizi:</span> <strong class="text-cyan-700">${gizi || '-'}</strong></div>
         </div>
@@ -783,6 +1083,67 @@ function openDoctorWorkspace(idAntrean, noAntrean, namaAnak, usia, poli, bb, tb,
     </div>
   `;
 
+  // Load Vaccines & Medicines from Stock for Doctor EMR pickers
+  try {
+    const sRes = await fetch('api/stock.php?action=list');
+    const sData = await sRes.json();
+    if (sData.success) {
+      cachedStockItems = sData.data || [];
+      const vacSelect = document.getElementById('emr-select-vaksin');
+      if (vacSelect) {
+        const vaccines = cachedStockItems.filter(i => i.kategori === 'vaksin');
+        vacSelect.innerHTML = `<option value="" data-id="0" data-price="0" data-kode="">-- Bukan Layanan Vaksin / Lewati --</option>` +
+          vaccines.map(v => `<option value="${v.nama_item}" data-id="${v.id}" data-price="${v.harga_satuan}" data-kode="${v.kode}">${v.nama_item} — Sisa Stok: ${v.stok} ${v.satuan} (${v.harga_formatted})</option>`).join('');
+      }
+      const medSelect = document.getElementById('emr-quick-medicine-select');
+      if (medSelect) {
+        const meds = cachedStockItems.filter(i => i.kategori !== 'vaksin');
+        medSelect.innerHTML = `<option value="" data-price="0">-- Pilih Obat / Alkes dari Stok --</option>` +
+          meds.map(m => `<option value="${m.nama_item}" data-price="${m.harga_satuan}">${m.nama_item} (${m.harga_formatted} / ${m.satuan}) — Stok: ${m.stok}</option>`).join('');
+      }
+    }
+  } catch (e) {}
+
+  // Pre-load existing Medical Record if already saved before
+  try {
+    const mrRes = await fetch(`api/medical_records.php?action=get_by_queue&id_antrean=${idAntrean}`);
+    const mrData = await mrRes.json();
+    if (mrData.success && mrData.data) {
+      const mr = mrData.data;
+      document.getElementById('emr-diagnosis').value = mr.diagnosis || '';
+      document.getElementById('emr-anamnesis').value = mr.anamnesis || '';
+      document.getElementById('emr-fisik').value = mr.pemeriksaan_fisik || '';
+      document.getElementById('emr-catatan-gigi').value = mr.catatan_gigi || '';
+      document.getElementById('emr-tindakan-medis').value = mr.tindakan_medis || '';
+      document.getElementById('emr-resep-obat').value = mr.resep_obat || '';
+      document.getElementById('emr-edukasi-ortu').value = mr.edukasi_ortu || '';
+      document.getElementById('emr-jadwal-kontrol').value = mr.jadwal_kontrol || '';
+      document.getElementById('emr-biaya-layanan').value = mr.biaya_layanan || 75000;
+    } else {
+      // Pre-fill anamnesis with initial complaint
+      document.getElementById('emr-anamnesis').value = keluhan ? `Pasien datang dengan keluhan: ${keluhan}` : '';
+      document.getElementById('emr-biaya-layanan').value = 75000;
+      document.getElementById('emr-biaya-tindakan').value = 0;
+      document.getElementById('emr-biaya-obat').value = 0;
+    }
+    if (mrData.success && mrData.vaccine) {
+      const vac = mrData.vaccine;
+      document.getElementById('emr-select-vaksin').value = vac.nama_vaksin || '';
+      document.getElementById('emr-nomor-batch').value = vac.nomor_batch || '';
+      document.getElementById('emr-dosis-ke').value = vac.dosis_ke || 1;
+      document.getElementById('emr-jadwal-vaksin').value = vac.jadwal_vaksin_berikutnya || '';
+      document.getElementById('emr-catatan-reaksi').value = vac.catatan_reaksi || '';
+    }
+    if (mrData.success && mrData.transaction) {
+      const tx = mrData.transaction;
+      document.getElementById('emr-biaya-layanan').value = tx.biaya_konsultasi || 75000;
+      document.getElementById('emr-biaya-tindakan').value = tx.biaya_tindakan || 0;
+      document.getElementById('emr-biaya-obat').value = tx.biaya_obat_vaksin || 0;
+    }
+  } catch (e) {}
+
+  recalcEmrTotalPreview();
+
   // Pre-open subtab based on Poli
   if (poli === 'gigi') {
     switchEmrSubTab('gigi');
@@ -792,7 +1153,7 @@ function openDoctorWorkspace(idAntrean, noAntrean, namaAnak, usia, poli, bb, tb,
     switchEmrSubTab('umum');
   }
 
-  // Update status to 'ruang_dokter' on the live board
+  // Update status to 'ruang_dokter' on the live board if not already finished
   fetch('api/queues.php?action=update_status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -800,6 +1161,110 @@ function openDoctorWorkspace(idAntrean, noAntrean, namaAnak, usia, poli, bb, tb,
   });
 
   modal.classList.remove('hidden');
+}
+
+function setQuickDiagnosis(diagText) {
+  const el = document.getElementById('emr-diagnosis');
+  if (el) el.value = diagText;
+}
+
+function addQuickDentalAction(actionName, cost) {
+  const catatanGigiEl = document.getElementById('emr-catatan-gigi');
+  const tindakanEl = document.getElementById('emr-tindakan-medis');
+  const biayaTindakanEl = document.getElementById('emr-biaya-tindakan');
+  const diagEl = document.getElementById('emr-diagnosis');
+
+  if (catatanGigiEl) {
+    catatanGigiEl.value = catatanGigiEl.value ? `${catatanGigiEl.value}; ${actionName}` : actionName;
+  }
+  if (tindakanEl) {
+    tindakanEl.value = tindakanEl.value ? `${tindakanEl.value}; ${actionName}` : actionName;
+  }
+  if (biayaTindakanEl) {
+    const cur = parseInt(biayaTindakanEl.value || 0, 10);
+    biayaTindakanEl.value = cur + cost;
+  }
+  if (diagEl && !diagEl.value) {
+    diagEl.value = 'K02.1 - Karies & Perawatan Gigi Susu Anak';
+  }
+  recalcEmrTotalPreview();
+  showToast(`Tindakan gigi "${actionName}" ditambahkan (+${formatRupiah(cost)})`, 'success');
+}
+
+function onEmrVaccineSelect(selectEl) {
+  const opt = selectEl.options[selectEl.selectedIndex];
+  if (!opt) return;
+
+  const idStok = parseInt(opt.getAttribute('data-id') || 0, 10);
+  const price = parseInt(opt.getAttribute('data-price') || 0, 10);
+  const kode = opt.getAttribute('data-kode') || 'VKN';
+
+  document.getElementById('emr-id-stok-vaksin').value = idStok;
+
+  if (idStok > 0) {
+    const batchEl = document.getElementById('emr-nomor-batch');
+    if (batchEl && !batchEl.value) {
+      batchEl.value = `BATCH-${kode}-${new Date().getFullYear()}`;
+    }
+    const nextDateEl = document.getElementById('emr-jadwal-vaksin');
+    if (nextDateEl && !nextDateEl.value) {
+      const nextMonth = new Date();
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      nextDateEl.value = nextMonth.toISOString().split('T')[0];
+    }
+    const obatCostEl = document.getElementById('emr-biaya-obat');
+    if (obatCostEl) {
+      obatCostEl.value = price;
+    }
+    const diagEl = document.getElementById('emr-diagnosis');
+    if (diagEl && !diagEl.value) {
+      diagEl.value = `Z23 - Imunisasi ${selectEl.value}`;
+    }
+    recalcEmrTotalPreview();
+    showToast(`Vaksin dipilih: harga ${formatRupiah(price)} otomatis masuk ke tagihan kasir`, 'info');
+  }
+}
+
+function addMedicineToPrescription() {
+  const medSelect = document.getElementById('emr-quick-medicine-select');
+  const doseInput = document.getElementById('emr-quick-medicine-dose');
+  const resepEl = document.getElementById('emr-resep-obat');
+  const biayaObatEl = document.getElementById('emr-biaya-obat');
+
+  if (!medSelect || !medSelect.value) {
+    showToast('Pilih obat dari daftar stok terlebih dahulu', 'error');
+    return;
+  }
+
+  const opt = medSelect.options[medSelect.selectedIndex];
+  const price = parseInt(opt.getAttribute('data-price') || 0, 10);
+  const medName = medSelect.value;
+  const dose = doseInput?.value || '3 x 1 takar sesudah makan';
+
+  const line = `- ${medName} (${dose})`;
+  if (resepEl) {
+    resepEl.value = resepEl.value ? `${resepEl.value}\n${line}` : line;
+  }
+  if (biayaObatEl) {
+    const cur = parseInt(biayaObatEl.value || 0, 10);
+    biayaObatEl.value = cur + price;
+  }
+
+  recalcEmrTotalPreview();
+  showToast(`${medName} ditambahkan ke resep (+${formatRupiah(price)})`, 'success');
+}
+
+function recalcEmrTotalPreview() {
+  const k = parseInt(document.getElementById('emr-biaya-layanan')?.value || 0, 10);
+  const t = parseInt(document.getElementById('emr-biaya-tindakan')?.value || 0, 10);
+  const o = parseInt(document.getElementById('emr-biaya-obat')?.value || 0, 10);
+  const adminFee = 10000;
+  const total = k + t + o + adminFee;
+
+  const previewEl = document.getElementById('emr-total-bill-preview');
+  if (previewEl) {
+    previewEl.textContent = formatRupiah(total);
+  }
 }
 
 function closeDoctorWorkspace() {
@@ -901,10 +1366,12 @@ async function submitDoctorEMR(e) {
     biaya_tindakan: form.biaya_tindakan.value || 0,
     biaya_obat: form.biaya_obat.value || 0,
     // Vaccine details if any
+    id_stok_vaksin: document.getElementById('emr-id-stok-vaksin')?.value || 0,
     nama_vaksin: form.nama_vaksin ? form.nama_vaksin.value : '',
     nomor_batch: form.nomor_batch ? form.nomor_batch.value : '',
     dosis_ke: form.dosis_ke ? form.dosis_ke.value : 1,
-    jadwal_vaksin_berikutnya: form.jadwal_vaksin_berikutnya ? form.jadwal_vaksin_berikutnya.value : null
+    jadwal_vaksin_berikutnya: form.jadwal_vaksin_berikutnya ? form.jadwal_vaksin_berikutnya.value : null,
+    catatan_reaksi: form.catatan_reaksi ? form.catatan_reaksi.value : 'Diberikan tanpa kontraindikasi'
   };
 
   try {
@@ -922,6 +1389,9 @@ async function submitDoctorEMR(e) {
       dentalRecords = {};
       initToothChart();
       loadDokterQueues();
+      loadCashierBilling();
+      loadStockTable();
+      loadAsistenVaccineStock();
     } else {
       showToast(result.error, 'error');
     }
@@ -965,6 +1435,7 @@ async function loadStockTable() {
           <td class="p-3 text-right">
             <div class="inline-flex items-center gap-1">
               <button onclick="adjustItemStock(${item.id}, 10)" class="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100" title="Tambah 10 stok">+10</button>
+              <button onclick="adjustItemStock(${item.id}, 1)" class="px-2 py-1 bg-cyan-50 text-cyan-700 rounded-lg text-xs font-bold hover:bg-cyan-100" title="Tambah 1 stok">+1</button>
               <button onclick="adjustItemStock(${item.id}, -1)" class="px-2 py-1 bg-rose-50 text-rose-700 rounded-lg text-xs font-bold hover:bg-rose-100" title="Kurang 1 stok">-1</button>
             </div>
           </td>
@@ -989,9 +1460,64 @@ async function adjustItemStock(id, amount) {
     if (data.success) {
       showToast(data.message, 'success');
       loadStockTable();
+      loadAsistenVaccineStock();
     }
   } catch (e) {
     showToast('Gagal menyesuaikan stok', 'error');
+  }
+}
+
+function openAddStockModal(defaultCategory = 'vaksin') {
+  const modal = document.getElementById('modal-add-stock');
+  if (!modal) return;
+  const katEl = document.getElementById('stock-new-kategori');
+  const kodeEl = document.getElementById('stock-new-kode');
+  const satuanEl = document.getElementById('stock-new-satuan');
+  if (katEl) katEl.value = defaultCategory;
+  if (kodeEl) {
+    const prefix = defaultCategory === 'vaksin' ? 'VKN-' : (defaultCategory === 'obat' ? 'OBT-' : 'ALT-');
+    kodeEl.value = prefix + Math.floor(100 + Math.random() * 900);
+  }
+  if (satuanEl) {
+    satuanEl.value = defaultCategory === 'vaksin' ? 'Vial' : 'Botol';
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeAddStockModal() {
+  const modal = document.getElementById('modal-add-stock');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitAddStockItem(e) {
+  e.preventDefault();
+  const payload = {
+    kategori: document.getElementById('stock-new-kategori').value,
+    kode: document.getElementById('stock-new-kode').value.trim(),
+    nama_item: document.getElementById('stock-new-nama').value.trim(),
+    stok: parseInt(document.getElementById('stock-new-stok').value || 10, 10),
+    satuan: document.getElementById('stock-new-satuan').value.trim(),
+    harga_satuan: parseInt(document.getElementById('stock-new-harga').value || 0, 10),
+    deskripsi: document.getElementById('stock-new-deskripsi').value.trim()
+  };
+
+  try {
+    const res = await fetch('api/stock.php?action=create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      closeAddStockModal();
+      loadStockTable();
+      loadAsistenVaccineStock();
+    } else {
+      showToast(data.error || 'Gagal menambah stok baru', 'error');
+    }
+  } catch (err) {
+    showToast('Gagal menyimpan item stok baru', 'error');
   }
 }
 
@@ -1010,10 +1536,11 @@ async function loadDailyReport() {
     if (data.success) {
       document.getElementById('rep-total-omzet').textContent = data.summary.total_omzet_fmt;
       document.getElementById('rep-total-pasien').textContent = `${data.summary.total_lunas} Transaksi Selesai`;
-      document.getElementById('rep-omzet-konsul').textContent = data.summary.omzet_konsul_fmt;
+      document.getElementById('rep-omzet-konsul').textContent = data.summary.omzet_konsultasi_fmt || data.summary.omzet_konsul_fmt || 'Rp 0';
       document.getElementById('rep-omzet-tindakan').textContent = data.summary.omzet_tindakan_fmt;
       document.getElementById('rep-omzet-obat').textContent = data.summary.omzet_obat_fmt;
-      document.getElementById('rep-omzet-admin').textContent = data.summary.omzet_admin_fmt;
+      const adminEl = document.getElementById('rep-omzet-admin');
+      if (adminEl) adminEl.textContent = data.summary.omzet_admin_fmt;
 
       // Table of transactions
       const txBody = document.getElementById('rep-transactions-table');
@@ -1515,10 +2042,11 @@ async function viewPatientHistoryLog(patientId, kodeRm) {
 
           <!-- Vitals Summary Card -->
           ${v.berat_badan ? `
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+              <div><span class="text-slate-400">Tensi:</span> <strong class="text-indigo-700 font-bold">${v.tensi_darah || '100/65 mmHg'}</strong></div>
+              <div><span class="text-slate-400">Suhu:</span> <strong class="text-rose-600 font-bold">${v.suhu_tubuh} °C</strong></div>
               <div><span class="text-slate-400">Berat Badan:</span> <strong class="text-slate-800 font-bold">${v.berat_badan} kg</strong></div>
               <div><span class="text-slate-400">Tinggi Badan:</span> <strong class="text-slate-800 font-bold">${v.tinggi_badan} cm</strong></div>
-              <div><span class="text-slate-400">Suhu:</span> <strong class="text-rose-600 font-bold">${v.suhu_tubuh} °C</strong></div>
               <div><span class="text-slate-400">Status Gizi:</span> <strong class="text-cyan-700 font-bold">${v.status_gizi || 'Normal'}</strong></div>
             </div>
           ` : ''}

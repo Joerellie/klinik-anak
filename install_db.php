@@ -89,6 +89,7 @@ try {
         id_antrean INT NOT NULL,
         id_pasien INT NOT NULL,
         id_asisten INT DEFAULT NULL,
+        tensi_darah VARCHAR(30) DEFAULT NULL,
         berat_badan DECIMAL(5,2) NOT NULL,
         tinggi_badan DECIMAL(5,2) NOT NULL,
         suhu_tubuh DECIMAL(4,1) NOT NULL,
@@ -99,6 +100,12 @@ try {
         CONSTRAINT fk_vital_queue FOREIGN KEY (id_antrean) REFERENCES queues(id) ON DELETE CASCADE,
         CONSTRAINT fk_vital_patient FOREIGN KEY (id_pasien) REFERENCES patients(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $vCols = $pdo->query("SHOW COLUMNS FROM vital_signs")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('tensi_darah', $vCols)) {
+        $pdo->exec("ALTER TABLE vital_signs ADD COLUMN tensi_darah VARCHAR(30) DEFAULT NULL AFTER id_asisten");
+    }
+    $pdo->exec("UPDATE vital_signs SET tensi_darah = '100/65 mmHg' WHERE tensi_darah IS NULL OR tensi_darah = ''");
 
     // Table 5: medical_records (rekam medis dokter)
     $pdo->exec("CREATE TABLE IF NOT EXISTS medical_records (

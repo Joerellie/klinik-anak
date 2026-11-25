@@ -105,7 +105,7 @@ if ($action === 'history_log') {
     $qStmt = $pdo->prepare("SELECT q.*,
                                    u_dok.nama_lengkap AS nama_dokter,
                                    mr.anamnesis, mr.pemeriksaan_fisik, mr.diagnosis, mr.catatan_gigi, mr.tindakan_medis, mr.resep_obat, mr.edukasi_ortu, mr.jadwal_kontrol, mr.biaya_layanan,
-                                   vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.lingkar_kepala, vs.status_gizi, vs.catatan_asisten,
+                                   vs.tensi_darah, vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.lingkar_kepala, vs.status_gizi, vs.catatan_asisten,
                                    tx.no_nota, tx.total_biaya, tx.status_bayar, tx.metode_pembayaran
                             FROM queues q
                             LEFT JOIN medical_records mr ON q.id = mr.id_antrean

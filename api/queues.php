@@ -3,6 +3,29 @@ require_once __DIR__ . '/../config/db.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
+// Ensure tensi_darah exists in vital_signs so SELECT never fails
+try {
+    if ($db_driver === 'mysql') {
+        $cols = $pdo->query("SHOW COLUMNS FROM vital_signs LIKE 'tensi_darah'")->fetchAll();
+        if (empty($cols)) {
+            $pdo->exec("ALTER TABLE vital_signs ADD COLUMN tensi_darah VARCHAR(30) DEFAULT NULL AFTER id_asisten");
+        }
+    } elseif ($db_driver === 'pgsql') {
+        $pdo->exec("ALTER TABLE vital_signs ADD COLUMN IF NOT EXISTS tensi_darah VARCHAR(30) DEFAULT NULL");
+    }
+} catch (Exception $e) {}
+
+// Auto-keep active demo queues on today's date so live board & portals are never empty on a new day
+try {
+    $todayCheck = date('Y-m-d');
+    $cntToday = $pdo->prepare("SELECT COUNT(*) FROM queues WHERE DATE(waktu_daftar) = ?");
+    $cntToday->execute([$todayCheck]);
+    if ($cntToday->fetchColumn() == 0) {
+        $nowStr = date('Y-m-d H:i:s');
+        $pdo->prepare("UPDATE queues SET waktu_daftar = ? WHERE status != 'batal'")->execute([$nowStr]);
+    }
+} catch (Exception $e) {}
+
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
 // Mask child name for privacy on public queue display (e.g., "Kenzo Pratama" -> "K***o P. (5 thn)")
@@ -89,7 +112,7 @@ if ($action === 'live') {
                                      JOIN patients p ON q.id_pasien = p.id
                                      WHERE DATE(q.waktu_daftar) = ?
                                      AND q.status IN ('ruang_asisten', 'ruang_dokter')
-                                     ORDER BY GREATEST(COALESCE(q.waktu_panggil_dokter, '1970-01-01'), COALESCE(q.waktu_panggil_asisten, '1970-01-01')) DESC
+                                     ORDER BY COALESCE(q.waktu_panggil_dokter, q.waktu_panggil_asisten, q.waktu_daftar) DESC
                                      LIMIT 1");
     $latestCallStmt->execute([$today]);
     $latestCall = $latestCallStmt->fetch();
@@ -98,7 +121,7 @@ if ($action === 'live') {
         'success' => true,
         'server_time' => date('H:i:s'),
         'server_date' => date('d M Y'),
-        'is_open' => (date('H') >= 8 && date('H') < 17), // 08:00 - 17:00
+        'is_open' => (date('H') >= 8 && date('H') < 17),
         'summary' => $summary,
         'latest_call' => $latestCall ?: null
     ]);
@@ -111,13 +134,14 @@ if ($action === 'track_ticket') {
         jsonResponse(['success' => false, 'error' => 'Nomor antrean atau kode RM wajib diisi.'], 400);
     }
 
+    $today = date('Y-m-d');
     $stmt = $pdo->prepare("SELECT q.*, p.nama_anak, p.tanggal_lahir, p.kode_rm
                           FROM queues q
                           JOIN patients p ON q.id_pasien = p.id
                           WHERE (q.nomor_antrean = ? OR p.kode_rm = ?)
-                          AND DATE(q.waktu_daftar) = CURDATE()
+                          AND DATE(q.waktu_daftar) = ?
                           ORDER BY q.id DESC LIMIT 1");
-    $stmt->execute([$code, $code]);
+    $stmt->execute([$code, $code, $today]);
     $ticket = $stmt->fetch();
 
     if (!$ticket) {
@@ -130,10 +154,10 @@ if ($action === 'track_ticket') {
     // Calculate queue position in front of this ticket
     $posStmt = $pdo->prepare("SELECT COUNT(*) FROM queues
                              WHERE poli_tujuan = ?
-                             AND DATE(waktu_daftar) = CURDATE()
+                             AND DATE(waktu_daftar) = ?
                              AND status IN ('menunggu_asisten', 'ruang_asisten', 'menunggu_dokter')
                              AND id < ?");
-    $posStmt->execute([$ticket['poli_tujuan'], $ticket['id']]);
+    $posStmt->execute([$ticket['poli_tujuan'], $today, $ticket['id']]);
     $positionAhead = $posStmt->fetchColumn();
 
     $ticket['people_ahead'] = $positionAhead;
@@ -146,20 +170,27 @@ if ($action === 'track_ticket') {
 if ($action === 'list') {
     $statusFilter = $_GET['status'] ?? '';
     $poliFilter = $_GET['poli'] ?? '';
+    $today = date('Y-m-d');
     
-    $query = "SELECT q.*, p.nama_anak, p.kode_rm, p.tanggal_lahir, p.jenis_kelamin, p.nama_ortu, p.no_hp,
-                     vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.status_gizi,
-                     tx.status_bayar, tx.total_biaya, tx.no_nota
+    $query = "SELECT q.*, p.nama_anak, p.kode_rm, p.tanggal_lahir, p.jenis_kelamin, p.nama_ortu, p.no_hp, p.riwayat_alergi,
+                     vs.tensi_darah, vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.lingkar_kepala, vs.status_gizi, vs.catatan_asisten,
+                     mr.diagnosis, mr.tindakan_medis, mr.resep_obat, mr.catatan_gigi,
+                     tx.status_bayar, tx.total_biaya, tx.no_nota, tx.metode_pembayaran
               FROM queues q
               JOIN patients p ON q.id_pasien = p.id
               LEFT JOIN vital_signs vs ON q.id = vs.id_antrean
+              LEFT JOIN medical_records mr ON q.id = mr.id_antrean
               LEFT JOIN transactions tx ON q.id = tx.id_antrean
-              WHERE DATE(q.waktu_daftar) = CURDATE()";
+              WHERE DATE(q.waktu_daftar) = ?";
     
-    $params = [];
+    $params = [$today];
     if (!empty($statusFilter)) {
-        $query .= " AND q.status = ?";
-        $params[] = $statusFilter;
+        if ($statusFilter === 'kasir_all') {
+            $query .= " AND (q.status IN ('kasir', 'selesai') OR tx.id IS NOT NULL)";
+        } else {
+            $query .= " AND q.status = ?";
+            $params[] = $statusFilter;
+        }
     }
     if (!empty($poliFilter)) {
         $query .= " AND q.poli_tujuan = ?";
@@ -198,10 +229,11 @@ if ($action === 'create') {
     // Prefix for queue number: U = Umum, G = Gigi, V = Vaksin, T = Tindakan
     $prefixMap = ['umum' => 'U', 'gigi' => 'G', 'vaksin' => 'V', 'tindakan' => 'T'];
     $prefix = $prefixMap[$poli_tujuan];
+    $today = date('Y-m-d');
 
     // Generate queue number today
-    $stmtNum = $pdo->prepare("SELECT COUNT(*) FROM queues WHERE poli_tujuan = ? AND DATE(waktu_daftar) = CURDATE()");
-    $stmtNum->execute([$poli_tujuan]);
+    $stmtNum = $pdo->prepare("SELECT COUNT(*) FROM queues WHERE poli_tujuan = ? AND DATE(waktu_daftar) = ?");
+    $stmtNum->execute([$poli_tujuan, $today]);
     $nextSeq = $stmtNum->fetchColumn() + 1;
     $nomor_antrean = sprintf("%s-%03d", $prefix, $nextSeq);
 
@@ -242,24 +274,31 @@ if ($action === 'update_status') {
         jsonResponse(['success' => false, 'error' => 'Status tidak valid.'], 400);
     }
 
+    $now = date('Y-m-d H:i:s');
     $timeField = '';
+    $params = [$newStatus];
     if ($newStatus === 'ruang_asisten') {
-        $timeField = ", waktu_panggil_asisten = NOW()";
+        $timeField = ", waktu_panggil_asisten = ?";
+        $params[] = $now;
     } elseif ($newStatus === 'menunggu_dokter') {
-        $timeField = ", waktu_selesai_asisten = NOW()";
+        $timeField = ", waktu_selesai_asisten = ?";
+        $params[] = $now;
     } elseif ($newStatus === 'ruang_dokter') {
-        $timeField = ", waktu_panggil_dokter = NOW()";
+        $timeField = ", waktu_panggil_dokter = ?";
+        $params[] = $now;
     } elseif ($newStatus === 'kasir') {
-        $timeField = ", waktu_selesai_dokter = NOW()";
+        $timeField = ", waktu_selesai_dokter = ?";
+        $params[] = $now;
     } elseif ($newStatus === 'selesai') {
-        $timeField = ", waktu_selesai_kasir = NOW()";
+        $timeField = ", waktu_selesai_kasir = ?";
+        $params[] = $now;
     }
+    $params[] = $queueId;
 
     $stmt = $pdo->prepare("UPDATE queues SET status = ? $timeField WHERE id = ?");
-    $stmt->execute([$newStatus, $queueId]);
+    $stmt->execute($params);
 
     jsonResponse(['success' => true, 'message' => "Status antrean diperbarui ke $newStatus"]);
 }
 
 jsonResponse(['success' => false, 'error' => 'Action tidak valid.'], 400);
-
