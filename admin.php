@@ -915,6 +915,9 @@ require_once __DIR__ . '/config/db.php';
                     class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-amber-500"></textarea>
         </div>
 
+        <!-- Riwayat Pengukuran Sebelumnya (Tampil saat Edit/Update) -->
+        <div id="vital-modal-prev-logs" class="hidden p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5"></div>
+
 
         <div class="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
           <button type="button" onclick="closeVitalsModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100">

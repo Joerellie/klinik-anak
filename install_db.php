@@ -107,6 +107,26 @@ try {
     }
     $pdo->exec("UPDATE vital_signs SET tensi_darah = '100/65 mmHg' WHERE tensi_darah IS NULL OR tensi_darah = ''");
 
+    // Table 4B: vital_signs_logs (log riwayat perubahan suhu, tensi, BB, TB jam demi jam)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS vital_signs_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        id_antrean INT NOT NULL,
+        id_pasien INT NOT NULL,
+        id_asisten INT DEFAULT NULL,
+        nama_asisten VARCHAR(100) DEFAULT NULL,
+        tensi_darah VARCHAR(30) DEFAULT NULL,
+        berat_badan DECIMAL(5,2) NOT NULL,
+        tinggi_badan DECIMAL(5,2) NOT NULL,
+        suhu_tubuh DECIMAL(4,1) NOT NULL,
+        lingkar_kepala DECIMAL(4,1) DEFAULT NULL,
+        status_gizi VARCHAR(50) DEFAULT 'Normal',
+        catatan_asisten TEXT DEFAULT NULL,
+        perubahan_ringkas TEXT DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX(id_antrean),
+        INDEX(id_pasien)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
     // Table 5: medical_records (rekam medis dokter)
     $pdo->exec("CREATE TABLE IF NOT EXISTS medical_records (
         id INT AUTO_INCREMENT PRIMARY KEY,

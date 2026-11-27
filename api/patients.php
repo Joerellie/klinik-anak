@@ -105,7 +105,7 @@ if ($action === 'history_log') {
     $qStmt = $pdo->prepare("SELECT q.*,
                                    u_dok.nama_lengkap AS nama_dokter,
                                    mr.anamnesis, mr.pemeriksaan_fisik, mr.diagnosis, mr.catatan_gigi, mr.tindakan_medis, mr.resep_obat, mr.edukasi_ortu, mr.jadwal_kontrol, mr.biaya_layanan,
-                                   vs.tensi_darah, vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.lingkar_kepala, vs.status_gizi, vs.catatan_asisten,
+                                   vs.tensi_darah, vs.berat_badan, vs.tinggi_badan, vs.suhu_tubuh, vs.lingkar_kepala, vs.status_gizi, vs.catatan_asisten, vs.created_at AS vital_created_at,
                                    tx.no_nota, tx.total_biaya, tx.status_bayar, tx.metode_pembayaran
                             FROM queues q
                             LEFT JOIN medical_records mr ON q.id = mr.id_antrean
@@ -116,6 +116,78 @@ if ($action === 'history_log') {
                             ORDER BY q.waktu_daftar DESC, q.id DESC");
     $qStmt->execute([$patient['id']]);
     $visits = $qStmt->fetchAll();
+
+    // Ensure vital_signs_logs table exists & attach all timestamped vital updates per visit
+    $logsByQueue = [];
+    try {
+        if ($db_driver === 'mysql') {
+            $pdo->exec("CREATE TABLE IF NOT EXISTS vital_signs_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                id_antrean INT NOT NULL,
+                id_pasien INT NOT NULL,
+                id_asisten INT DEFAULT NULL,
+                nama_asisten VARCHAR(100) DEFAULT NULL,
+                tensi_darah VARCHAR(30) DEFAULT NULL,
+                berat_badan DECIMAL(5,2) NOT NULL,
+                tinggi_badan DECIMAL(5,2) NOT NULL,
+                suhu_tubuh DECIMAL(4,1) NOT NULL,
+                lingkar_kepala DECIMAL(4,1) DEFAULT NULL,
+                status_gizi VARCHAR(50) DEFAULT 'Normal',
+                catatan_asisten TEXT DEFAULT NULL,
+                perubahan_ringkas TEXT DEFAULT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX(id_antrean),
+                INDEX(id_pasien)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        }
+
+        // Backfill baseline log if a visit has vital_signs but 0 rows in vital_signs_logs
+        $chkVs = $pdo->prepare("SELECT vs.*, u.nama_lengkap AS nama_asisten
+                                FROM vital_signs vs
+                                LEFT JOIN users u ON vs.id_asisten = u.id
+                                WHERE vs.id_pasien = ?");
+        $chkVs->execute([$patient['id']]);
+        $allVs = $chkVs->fetchAll();
+        foreach ($allVs as $vsRow) {
+            $cntL = $pdo->prepare("SELECT COUNT(*) FROM vital_signs_logs WHERE id_antrean = ?");
+            $cntL->execute([$vsRow['id_antrean']]);
+            if ($cntL->fetchColumn() == 0) {
+                $insL = $pdo->prepare("INSERT INTO vital_signs_logs (id_antrean, id_pasien, id_asisten, nama_asisten, tensi_darah, berat_badan, tinggi_badan, suhu_tubuh, lingkar_kepala, status_gizi, catatan_asisten, perubahan_ringkas, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $insL->execute([
+                    $vsRow['id_antrean'],
+                    $vsRow['id_pasien'],
+                    $vsRow['id_asisten'] ?: 2,
+                    $vsRow['nama_asisten'] ?: 'Juan Darren, A.Md.Kep',
+                    $vsRow['tensi_darah'] ?: '100/65 mmHg',
+                    $vsRow['berat_badan'],
+                    $vsRow['tinggi_badan'],
+                    $vsRow['suhu_tubuh'],
+                    $vsRow['lingkar_kepala'],
+                    $vsRow['status_gizi'] ?: 'Normal',
+                    $vsRow['catatan_asisten'],
+                    'Pengukuran Awal (Pemeriksaan Pertama Asisten)',
+                    $vsRow['created_at'] ?: date('Y-m-d H:i:s')
+                ]);
+            }
+        }
+
+        $lStmt = $pdo->prepare("SELECT * FROM vital_signs_logs WHERE id_pasien = ? ORDER BY id ASC");
+        $lStmt->execute([$patient['id']]);
+        $allLogs = $lStmt->fetchAll();
+        foreach ($allLogs as $lg) {
+            $qid = $lg['id_antrean'];
+            if (!isset($logsByQueue[$qid])) {
+                $logsByQueue[$qid] = [];
+            }
+            $logsByQueue[$qid][] = $lg;
+        }
+    } catch (Exception $e) {}
+
+    foreach ($visits as &$v) {
+        $qid = $v['id'];
+        $v['vital_logs'] = isset($logsByQueue[$qid]) ? $logsByQueue[$qid] : [];
+    }
+    unset($v);
 
     // Fetch all vaccination records
     $vacStmt = $pdo->prepare("SELECT vr.*, u.nama_lengkap AS nama_dokter, q.nomor_antrean

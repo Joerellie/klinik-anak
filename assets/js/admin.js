@@ -797,6 +797,12 @@ async function openVitalsModal(idAntrean, noAntrean, namaAnak, usia, keluhan, po
   }
 
   // Load existing vitals if already filled earlier
+  const prevLogsBox = document.getElementById('vital-modal-prev-logs');
+  if (prevLogsBox) {
+    prevLogsBox.classList.add('hidden');
+    prevLogsBox.innerHTML = '';
+  }
+
   try {
     const vRes = await fetch(`api/vitals.php?action=get&id_antrean=${idAntrean}`);
     const vData = await vRes.json();
@@ -810,6 +816,27 @@ async function openVitalsModal(idAntrean, noAntrean, namaAnak, usia, keluhan, po
       document.getElementById('vital-catatan').value = vs.catatan_asisten || '';
       calculateNutritionalStatus();
       checkTemperatureAlert();
+    }
+    if (vData.success && vData.logs && vData.logs.length > 0 && prevLogsBox) {
+      prevLogsBox.classList.remove('hidden');
+      prevLogsBox.innerHTML = `
+        <div class="text-[11px] font-extrabold text-slate-700 flex items-center gap-1.5">
+          <i class="fa-solid fa-clock-rotate-left text-amber-600"></i>
+          <span>Riwayat Pengukuran Sebelumnya (Tersimpan Otomatis di History Dokter):</span>
+        </div>
+        <div class="space-y-1 max-h-28 overflow-y-auto pr-1">
+          ${vData.logs.map((lg, i) => `
+            <div class="p-2 rounded-xl bg-white border border-slate-200 text-[11px] flex flex-wrap items-center justify-between gap-1">
+              <div>
+                <span class="font-mono font-bold text-slate-800">${(lg.created_at || '').substring(11, 16) || lg.created_at} WIB</span>
+                <span class="text-slate-400 mx-1">•</span>
+                <span>Suhu: <strong class="text-rose-600">${lg.suhu_tubuh}°C</strong>, Tensi: <strong>${lg.tensi_darah || '100/65 mmHg'}</strong>, BB: <strong>${lg.berat_badan}kg</strong>, TB: <strong>${lg.tinggi_badan}cm</strong></span>
+              </div>
+              <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[10px]">${lg.perubahan_ringkas || 'Tercatat'}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
     }
   } catch (e) {}
 
@@ -2040,14 +2067,74 @@ async function viewPatientHistoryLog(patientId, kodeRm) {
             </div>
           </div>
 
-          <!-- Vitals Summary Card -->
+          <!-- Vitals Summary Card (Kondisi Terakhir / Terbaru) -->
           ${v.berat_badan ? `
-            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-              <div><span class="text-slate-400">Tensi:</span> <strong class="text-indigo-700 font-bold">${v.tensi_darah || '100/65 mmHg'}</strong></div>
-              <div><span class="text-slate-400">Suhu:</span> <strong class="text-rose-600 font-bold">${v.suhu_tubuh} °C</strong></div>
-              <div><span class="text-slate-400">Berat Badan:</span> <strong class="text-slate-800 font-bold">${v.berat_badan} kg</strong></div>
-              <div><span class="text-slate-400">Tinggi Badan:</span> <strong class="text-slate-800 font-bold">${v.tinggi_badan} cm</strong></div>
-              <div><span class="text-slate-400">Status Gizi:</span> <strong class="text-cyan-700 font-bold">${v.status_gizi || 'Normal'}</strong></div>
+            <div class="space-y-2">
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                <div><span class="text-slate-400">Tensi Terkini:</span> <strong class="text-indigo-700 font-bold">${v.tensi_darah || '100/65 mmHg'}</strong></div>
+                <div><span class="text-slate-400">Suhu Terkini:</span> <strong class="text-rose-600 font-bold">${v.suhu_tubuh} °C</strong></div>
+                <div><span class="text-slate-400">Berat Badan:</span> <strong class="text-slate-800 font-bold">${v.berat_badan} kg</strong></div>
+                <div><span class="text-slate-400">Tinggi Badan:</span> <strong class="text-slate-800 font-bold">${v.tinggi_badan} cm</strong></div>
+                <div><span class="text-slate-400">Status Gizi:</span> <strong class="text-cyan-700 font-bold">${v.status_gizi || 'Normal'}</strong></div>
+              </div>
+
+              <!-- Timeline Log Perubahan Tanda Vital Jam demi Jam -->
+              ${v.vital_logs && v.vital_logs.length > 0 ? `
+                <div class="p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-200 text-xs space-y-2">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5 font-extrabold text-indigo-950 text-[11px] uppercase tracking-wider">
+                      <i class="fa-solid fa-timeline text-indigo-600"></i>
+                      <span>Riwayat & Log Perubahan Tanda Vital (Suhu / Tensi / BB / TB):</span>
+                    </div>
+                    <span class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[10px]">
+                      ${v.vital_logs.length}x Pencatatan Asisten
+                    </span>
+                  </div>
+
+                  <div class="space-y-1.5">
+                    ${v.vital_logs.map((lg, lIdx) => {
+                      const timeOnly = lg.created_at ? (lg.created_at.length >= 16 ? lg.created_at.substring(11, 16) : lg.created_at) : '-';
+                      const dateOnly = lg.created_at ? lg.created_at.substring(0, 10) : '';
+                      const isLatest = (lIdx === v.vital_logs.length - 1 && v.vital_logs.length > 1);
+                      const isInitial = (lIdx === 0);
+                      return `
+                        <div class="p-2.5 rounded-xl ${isLatest ? 'bg-white border-2 border-indigo-400 shadow-xs' : 'bg-white/80 border border-indigo-100'} flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div class="space-y-0.5">
+                            <div class="flex flex-wrap items-center gap-1.5">
+                              <span class="px-2 py-0.5 rounded font-mono font-extrabold text-[11px] ${isLatest ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-800'}">
+                                <i class="fa-regular fa-clock mr-1"></i>Jam ${timeOnly} WIB
+                              </span>
+                              <span class="text-[10px] text-slate-400 font-mono">(${dateOnly})</span>
+                              <span class="text-[11px] font-bold ${isInitial ? 'text-slate-600' : 'text-indigo-800'}">
+                                ${isInitial ? '• Pemeriksaan Awal' : `• Update #${lIdx + 1} (Terbaru)`}
+                              </span>
+                              ${lg.perubahan_ringkas && !isInitial ? `
+                                <span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 font-extrabold text-[10px]">
+                                  <i class="fa-solid fa-arrow-trend-up mr-0.5"></i> ${lg.perubahan_ringkas}
+                                </span>
+                              ` : ''}
+                            </div>
+                            <div class="text-slate-700 text-[11px] pt-0.5">
+                              Suhu: <strong class="${parseFloat(lg.suhu_tubuh) >= 37.8 ? 'text-rose-600 font-extrabold' : 'text-slate-900'}">${lg.suhu_tubuh} °C</strong>
+                              <span class="text-slate-300 mx-1">|</span>
+                              Tensi: <strong class="text-indigo-800">${lg.tensi_darah || '100/65 mmHg'}</strong>
+                              <span class="text-slate-300 mx-1">|</span>
+                              BB: <strong>${lg.berat_badan} kg</strong>
+                              <span class="text-slate-300 mx-1">|</span>
+                              TB: <strong>${lg.tinggi_badan} cm</strong>
+                              ${lg.lingkar_kepala ? `<span class="text-slate-300 mx-1">|</span> LK: <strong>${lg.lingkar_kepala} cm</strong>` : ''}
+                            </div>
+                            ${lg.catatan_asisten ? `<div class="text-[11px] text-slate-500 italic">"${lg.catatan_asisten}"</div>` : ''}
+                          </div>
+                          <div class="text-[10px] text-slate-400 font-semibold whitespace-nowrap self-end sm:self-center">
+                            <i class="fa-solid fa-user-nurse mr-0.5"></i> ${lg.nama_asisten || 'Asisten Medis'}
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              ` : ''}
             </div>
           ` : ''}
 

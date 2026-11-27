@@ -79,6 +79,24 @@ CREATE TABLE IF NOT EXISTS vital_signs (
 );
 ALTER TABLE vital_signs ADD COLUMN IF NOT EXISTS tensi_darah VARCHAR(30) DEFAULT NULL;
 
+-- 4B. Table: vital_signs_logs (Log Riwayat Perubahan Tanda Vital Jam demi Jam)
+CREATE TABLE IF NOT EXISTS vital_signs_logs (
+    id SERIAL PRIMARY KEY,
+    id_antrean INT NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+    id_pasien INT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    id_asisten INT DEFAULT NULL,
+    nama_asisten VARCHAR(100) DEFAULT NULL,
+    tensi_darah VARCHAR(30) DEFAULT NULL,
+    berat_badan NUMERIC(5,2) NOT NULL,
+    tinggi_badan NUMERIC(5,2) NOT NULL,
+    suhu_tubuh NUMERIC(4,1) NOT NULL,
+    lingkar_kepala NUMERIC(4,1) DEFAULT NULL,
+    status_gizi VARCHAR(50) DEFAULT 'Normal',
+    catatan_asisten TEXT DEFAULT NULL,
+    perubahan_ringkas TEXT DEFAULT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 5. Table: medical_records (Rekam Medis Dokter & Catatan Lengkap)
 CREATE TABLE IF NOT EXISTS medical_records (
     id SERIAL PRIMARY KEY,
