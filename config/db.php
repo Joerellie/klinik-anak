@@ -7,6 +7,8 @@
  * 3. Graceful SQLite / Demo Fallback
  */
 
+date_default_timezone_set('Asia/Jakarta');
+
 // 1. Auto-load .env file if present
 $envFile = __DIR__ . '/../.env';
 if (file_exists($envFile)) {
